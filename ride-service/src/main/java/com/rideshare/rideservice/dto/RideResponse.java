@@ -29,7 +29,7 @@ public class RideResponse {
 
     private double dropLongitude;
 
-    private double dropAddress;
+    private String dropAddress;
 
     // to track lifecycle of the ride
     private RideStatus status;

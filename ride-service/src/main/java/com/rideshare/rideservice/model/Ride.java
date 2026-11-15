@@ -26,12 +26,12 @@ public class Ride {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
-    private String id;
+    private String rideId;
 
     @Column (nullable=false)
     private String riderId;
     
-    @Column (nullable = false)
+    @Column (nullable = true)
     private String driverId;
     
     
@@ -51,7 +51,7 @@ public class Ride {
     private double dropLongitude;
 
     @Column(nullable = false)
-    private double dropAddress;
+    private String dropAddress;
 
 
     // to track lifecycle of the ride
