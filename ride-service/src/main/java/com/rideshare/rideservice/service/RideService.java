@@ -5,12 +5,13 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.rideshare.rideservice.dto.RideRequest;
 import com.rideshare.rideservice.dto.RideResponse;
+import com.rideshare.rideservice.event.RideRequestedEvent;
 import com.rideshare.rideservice.model.Ride;
 import com.rideshare.rideservice.model.RideStatus;
 import com.rideshare.rideservice.repository.RideRepository;
@@ -24,12 +25,19 @@ import lombok.extern.slf4j.Slf4j;
 public class RideService {
 
     private final RideRepository rideRepository;
+    private final KafkaTemplate<String, RideRequestedEvent> kafkaTemplate;
 
-    // Create a new ride
+    private static final String RIDE_REQUESTED_TOPIC = "ride.requested";
+
+    /*
+     * step1: Create a new ride
+     * step2: publish the even to kafka
+     */
     public RideResponse rideRequested(RideRequest rideRequest) {
 
         log.info("Creating ride for riderId: {}", rideRequest.getRiderId());
 
+        //step1:
         Ride ride = new Ride();
 
         ride.setRiderId(rideRequest.getRiderId());
@@ -39,14 +47,47 @@ public class RideService {
         ride.setDropLatitude(rideRequest.getDropLatitude());
         ride.setDropLongitude(rideRequest.getDropLongitude());
         ride.setDropAddress(rideRequest.getDropAddress());
-
+        ride.setEstimatedFare(calculateEstimatedFare(rideRequest)); 
         ride.setStatus(RideStatus.REQUESTED);
-
         Ride savedRide = rideRepository.save(ride);
 
-        log.info("Ride created successfully with rideId: {}", savedRide.getRideId());
 
+
+
+        // step2:
+        // matching service will consume this event and will find the nearest driver
+
+        RideRequestedEvent event = new RideRequestedEvent(
+                savedRide.getRideId(),
+                savedRide.getRiderId(),
+                savedRide.getDriverId(),
+                savedRide.getPickupLongitude(),
+                savedRide.getPickupLatitude(),
+                savedRide.getPickupAddress(),
+                savedRide.getDropLongitude(),
+                savedRide.getDropLatitude(),
+                savedRide.getDropAddress()
+        );
+
+        kafkaTemplate.send(RIDE_REQUESTED_TOPIC, savedRide.getRideId(), event);
+        log.info("RideRequestEvent published to kafka for ride: {}", savedRide.getRideId());
+
+        log.info("Ride created successfully with rideId: {}", savedRide.getRideId());
+        savedRide.setStatus(RideStatus.MATCHING);
+        rideRepository.save(savedRide);
         return mapToRideResponse(savedRide);
+    }
+
+    // this mthod is used by matching service to when a driver is found
+    // and updates the ride status to accepeted
+    // and assigns the driver
+    public void updateRideWithDriver(String rideId, String driverId) {
+        Ride ride = getRide(rideId);
+
+
+        ride.setDriverId(driverId);
+        ride.setStatus(RideStatus.ACCEPTED);
+        rideRepository.save(ride);
     }
 
     // Get ride by ID
@@ -68,14 +109,13 @@ public class RideService {
     }
 
     // Start ride
-    @Transactional
     public RideResponse startRide(String rideId) {
 
         log.info("Starting ride with rideId: {}", rideId);
 
         Ride ride = getRide(rideId);
 
-        if (ride.getStatus() != RideStatus.DRIVER_ARRIVING) {
+        if (ride.getStatus() != RideStatus.ACCEPTED) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
                     "Ride can only be started when driver is arriving");
@@ -92,7 +132,6 @@ public class RideService {
     }
 
     // Complete ride
-    @Transactional
     public RideResponse completeRide(String rideId) {
 
         log.info("Completing ride with rideId: {}", rideId);
@@ -107,6 +146,7 @@ public class RideService {
 
         ride.setStatus(RideStatus.COMPLETED);
         ride.setRideCompletedAt(LocalDateTime.now());
+        ride.setActualFare(ride.getEstimatedFare());
 
         Ride updatedRide = rideRepository.save(ride);
 
@@ -116,7 +156,6 @@ public class RideService {
     }
 
     // Cancel ride
-    @Transactional
     public RideResponse canclledRide(String rideId) {
 
         log.info("Cancelling ride with rideId: {}", rideId);
@@ -153,7 +192,7 @@ public class RideService {
 
         RideResponse response = new RideResponse();
 
-        response.setId(ride.getRideId());
+        response.setRideId(ride.getRideId());
         response.setRiderId(ride.getRiderId());
         response.setDriverId(ride.getDriverId());
 
@@ -177,5 +216,53 @@ public class RideService {
         response.setRideCompletedAt(ride.getRideCompletedAt());
 
         return response;
+    }
+
+    // calculate estimated fare
+    public double calculateEstimatedFare(RideRequest rideRequest) {
+
+        double distance = calculateDistance(
+                rideRequest.getPickupLatitude(),
+                rideRequest.getPickupLongitude(),
+                rideRequest.getDropLatitude(),
+                rideRequest.getDropLongitude());
+
+        double baseFare = 50.0;
+        double perKmRate = 12.0;
+
+        return baseFare + (distance * perKmRate);
+    }
+
+    
+    // Calculates the straight-line distance between two geographical coordinates
+    // using the Haversine formula.
+    private double calculateDistance(double lat1, double lon1, double lat2, double lon2) {
+
+        // Average radius of the Earth in kilometres.
+        final double EARTH_RADIUS = 6371;
+
+        // Calculate the difference between the two latitudes and convert it from
+        // degrees to radians.
+        double latDistance = Math.toRadians(lat2 - lat1);
+
+        // Calculate the difference between the two longitudes and convert it from
+        // degrees to radians.
+        double lonDistance = Math.toRadians(lon2 - lon1);
+
+        // Haversine formula:
+        // Calculates the square of half the chord distance between the two geographical
+        // points.
+        double a = Math.sin(latDistance / 2) * Math.sin(latDistance / 2)
+                + Math.cos(Math.toRadians(lat1))
+                        * Math.cos(Math.toRadians(lat2))
+                        * Math.sin(lonDistance / 2) * Math.sin(lonDistance / 2);
+
+        // Calculates the angular distance between the two points in radians.
+        // atan2 is used to calculate the angle accurately.
+        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+        // Multiply the angular distance by Earth's radius to get the actual distance in
+        // kilometres.
+        return EARTH_RADIUS * c;
     }
 }
