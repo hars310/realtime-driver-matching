@@ -1,0 +1,29 @@
+package com.rideshare.matchingservice.event;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+/**
+ * 
+ * RideRequestEvent
+ * event consumed from kafka with topic: ride.requested
+ * and published by ride-service when a rider requests a ride   
+ */
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor 
+public class RideRequestedEvent {
+    private String rideId;
+    private String riderId;
+    private String driverId;
+
+    private double pickupLatitude;
+    private double pickupLongitude;
+    private String pickupAddress;
+
+    private double dropLatitude;
+    private double dropLongitude;
+    private String dropAddress;
+}
