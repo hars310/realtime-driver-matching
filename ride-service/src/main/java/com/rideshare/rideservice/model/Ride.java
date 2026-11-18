@@ -31,7 +31,6 @@ public class Ride {
     @Column (nullable=false)
     private String riderId;
     
-    @Column (nullable = true)
     private String driverId;
     
     
