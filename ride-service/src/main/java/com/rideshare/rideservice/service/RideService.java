@@ -61,11 +61,11 @@ public class RideService {
                 savedRide.getRideId(),
                 savedRide.getRiderId(),
                 savedRide.getDriverId(),
-                savedRide.getPickupLongitude(),
                 savedRide.getPickupLatitude(),
+                savedRide.getPickupLongitude(),
                 savedRide.getPickupAddress(),
-                savedRide.getDropLongitude(),
                 savedRide.getDropLatitude(),
+                savedRide.getDropLongitude(),
                 savedRide.getDropAddress()
         );
 
